@@ -153,7 +153,9 @@ const game_names = [
 	maek.CPP('PlayMode.cpp'),
 	maek.CPP('main.cpp'),
 	maek.CPP('LitColorTextureProgram.cpp'),
-	//maek.CPP('ColorTextureProgram.cpp'),  //not used right now, but you might want it
+	maek.CPP('ColorTextureProgram.cpp'),
+	maek.CPP('TextRenderer.cpp'),
+	maek.CPP('Story.cpp'),
 	maek.CPP('Sound.cpp'),
 	maek.CPP('load_wav.cpp'),
 	maek.CPP('load_opus.cpp')
@@ -190,6 +192,11 @@ const freetype_test_names = [
 	maek.CPP('freetype-test.cpp')
 ];
 
+//the story packer is run by hand and its output is committed, so the game never depends on it:
+const pack_story_names = [
+	maek.CPP('pack-story.cpp')
+];
+
 //the '[exeFile =] LINK(objFiles, exeFileBase, [, options])' links an array of objects into an executable:
 // objFiles: array of objects to link
 // exeFileBase: name of executable file to produce
@@ -199,9 +206,10 @@ const show_meshes_exe = maek.LINK([...show_meshes_names, ...common_names], 'scen
 const show_scene_exe = maek.LINK([...show_scene_names, ...common_names], 'scenes/show-scene');
 
 const freetype_test_exe = maek.LINK([...freetype_test_names], 'freetype-test');
+const pack_story_exe = maek.LINK([...pack_story_names], 'pack-story');
 
 //set the default target to the game (and copy the readme files):
-maek.TARGETS = [game_exe, show_meshes_exe, show_scene_exe, freetype_test_exe, ...copies];
+maek.TARGETS = [game_exe, show_meshes_exe, show_scene_exe, freetype_test_exe, pack_story_exe, ...copies];
 
 //Note that tasks that produce ':abstract targets' are never cached.
 // This is similar to how .PHONY targets behave in make.

@@ -1,245 +1,196 @@
+//the Load<> blocks and the draw() scaffolding here are based on the PlayMode.cpp that ships with the base4 code.
 #include "PlayMode.hpp"
 
-#include "LitColorTextureProgram.hpp"
-
-#include "DrawLines.hpp"
-#include "Mesh.hpp"
 #include "Load.hpp"
-#include "gl_errors.hpp"
 #include "data_path.hpp"
+#include "gl_errors.hpp"
 
-#include <glm/gtc/type_ptr.hpp>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <stdexcept>
+#include <string>
 
-#include <random>
+namespace {
+	//about forty five lines of text fit the window height at this ratio
+	constexpr float PixelSizeFromHeight = 1.0f / 22.5f;
+	//the column is a multiple of the glyph size so a line holds the same number of words on any monitor
+	constexpr float ColumnPerPixelSize = 26.0f;
+	//fractions of the window height kept clear above and below the text
+	constexpr float TopFraction = 0.09f;
+	constexpr float BottomFraction = 0.06f;
+	constexpr uint32_t MinPixelSize = 11;
+	constexpr char RestartLabel[] = "1. Begin again";
 
-GLuint hexapod_meshes_for_lit_color_texture_program = 0;
-Load< MeshBuffer > hexapod_meshes(LoadTagDefault, []() -> MeshBuffer const * {
-	MeshBuffer const *ret = new MeshBuffer(data_path("hexapod.pnct"));
-	hexapod_meshes_for_lit_color_texture_program = ret->make_vao_for_program(lit_color_texture_program->program);
-	return ret;
-});
+	constexpr glm::u8vec4 Background = glm::u8vec4(0x0e, 0x0e, 0x0e, 0xff);
+	constexpr glm::u8vec4 TextColor = glm::u8vec4(0xe4, 0xe0, 0xd8, 0xff);
+	constexpr glm::u8vec4 DimColor = glm::u8vec4(0x66, 0x64, 0x60, 0xff);
 
-Load< Scene > hexapod_scene(LoadTagDefault, []() -> Scene const * {
-	return new Scene(data_path("hexapod.scene"), [&](Scene &scene, Scene::Transform *transform, std::string const &mesh_name){
-		Mesh const &mesh = hexapod_meshes->lookup(mesh_name);
-
-		scene.drawables.emplace_back(transform);
-		Scene::Drawable &drawable = scene.drawables.back();
-
-		drawable.pipeline = lit_color_texture_program_pipeline;
-
-		drawable.pipeline.vao = hexapod_meshes_for_lit_color_texture_program;
-		drawable.pipeline.type = mesh.type;
-		drawable.pipeline.start = mesh.start;
-		drawable.pipeline.count = mesh.count;
-
-	});
-});
-
-Load< Sound::Sample > dusty_floor_sample(LoadTagDefault, []() -> Sound::Sample const * {
-	return new Sound::Sample(data_path("dusty-floor.opus"));
-});
-
-
-Load< Sound::Sample > honk_sample(LoadTagDefault, []() -> Sound::Sample const * {
-	return new Sound::Sample(data_path("honk.wav"));
-});
-
-
-PlayMode::PlayMode() : scene(*hexapod_scene) {
-	//get pointers to leg for convenience:
-	for (auto &transform : scene.transforms) {
-		if (transform.name == "Hip.FL") hip = &transform;
-		else if (transform.name == "UpperLeg.FL") upper_leg = &transform;
-		else if (transform.name == "LowerLeg.FL") lower_leg = &transform;
+	//a tall narrow window is limited by its width, so take the smaller of the two as the height to scale from
+	uint32_t pixel_size_for(glm::uvec2 const &drawable_size) {
+		float usable = std::min(float(drawable_size.y), float(drawable_size.x) * 9.0f / 16.0f);
+		return std::max(MinPixelSize, uint32_t(std::round(usable * PixelSizeFromHeight)));
 	}
-	if (hip == nullptr) throw std::runtime_error("Hip not found.");
-	if (upper_leg == nullptr) throw std::runtime_error("Upper leg not found.");
-	if (lower_leg == nullptr) throw std::runtime_error("Lower leg not found.");
+} //anonymous namespace
 
-	hip_base_rotation = hip->rotation;
-	upper_leg_base_rotation = upper_leg->rotation;
-	lower_leg_base_rotation = lower_leg->rotation;
+//the renderer is written to while drawing, so it sits next to its loader the way the base code keeps its vao
+static TextRenderer *text_renderer = nullptr;
+static uint32_t text_pixel_size = 0;
 
-	//get pointer to camera for convenience:
-	if (scene.cameras.size() != 1) throw std::runtime_error("Expecting scene to have exactly one camera, but it has " + std::to_string(scene.cameras.size()));
-	camera = &scene.cameras.front();
+static void set_pixel_size(uint32_t pixel_size) {
+	if (pixel_size == text_pixel_size) return;
+	//glyphs are hinted for one pixel size, so a new size needs a fresh atlas
+	delete text_renderer;
+	text_renderer = new TextRenderer(data_path("EBGaramond-Regular.ttf"), pixel_size);
+	text_pixel_size = pixel_size;
+}
 
-	//start music loop playing:
-	// (note: position will be over-ridden in update())
-	leg_tip_loop = Sound::loop_3D(*dusty_floor_sample, 1.0f, get_leg_tip_position(), 10.0f);
+static float column_for(glm::uvec2 const &drawable_size) {
+	return std::min(float(drawable_size.x) * 0.76f, float(text_pixel_size) * ColumnPerPixelSize);
+}
+
+Load< void > load_text_renderer(LoadTagDefault, []() {
+	set_pixel_size(32);
+});
+
+Load< Story > story(LoadTagDefault, []() -> Story const * {
+	return new Story(data_path("story.chunk"));
+});
+
+PlayMode::PlayMode() {
+	go_to(0);
 }
 
 PlayMode::~PlayMode() {
 }
 
-bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
+void PlayMode::go_to(uint32_t next_node) {
+	if (next_node >= story->nodes.size()) {
+		throw std::runtime_error("Tried to enter node " + std::to_string(next_node) + ", which is not in the story.");
+	}
+	node = next_node;
+	selected = 0;
+	needs_shape = true;
+}
 
-	if (evt.type == SDL_EVENT_KEY_DOWN) {
-		if (evt.key.key == SDLK_ESCAPE) {
-			SDL_SetWindowRelativeMouseMode(Mode::window, false);
-			return true;
-		} else if (evt.key.key == SDLK_A) {
-			left.downs += 1;
-			left.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_D) {
-			right.downs += 1;
-			right.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_W) {
-			up.downs += 1;
-			up.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_S) {
-			down.downs += 1;
-			down.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_SPACE) {
-			if (honk_oneshot) honk_oneshot->stop();
-			honk_oneshot = Sound::play_3D(*honk_sample, 0.3f, glm::vec3(4.6f, -7.8f, 6.9f)); //hardcoded position of front of car, from blender
-		}
-	} else if (evt.type == SDL_EVENT_KEY_UP) {
-		if (evt.key.key == SDLK_A) {
-			left.pressed = false;
-			return true;
-		} else if (evt.key.key == SDLK_D) {
-			right.pressed = false;
-			return true;
-		} else if (evt.key.key == SDLK_W) {
-			up.pressed = false;
-			return true;
-		} else if (evt.key.key == SDLK_S) {
-			down.pressed = false;
-			return true;
-		}
-	} else if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-		if (SDL_GetWindowRelativeMouseMode(Mode::window) == false) {
-			SDL_SetWindowRelativeMouseMode(Mode::window, true);
-			return true;
-		}
-	} else if (evt.type == SDL_EVENT_MOUSE_MOTION) {
-		if (SDL_GetWindowRelativeMouseMode(Mode::window) == true) {
-			glm::vec2 motion = glm::vec2(
-				evt.motion.xrel / float(window_size.y),
-				-evt.motion.yrel / float(window_size.y)
-			);
-			camera->transform->rotation = glm::normalize(
-				camera->transform->rotation
-				* glm::angleAxis(-motion.x * camera->fovy, glm::vec3(0.0f, 1.0f, 0.0f))
-				* glm::angleAxis(motion.y * camera->fovy, glm::vec3(1.0f, 0.0f, 0.0f))
-			);
-			return true;
-		}
+void PlayMode::choose(uint32_t choice) {
+	Story::Node const &current_node = story->nodes[node];
+	uint32_t count = current_node.choice_end - current_node.choice_begin;
+	if (count == 0) {
+		go_to(0);
+		return;
+	}
+	if (choice >= count) return;
+	go_to(story->choices[current_node.choice_begin + choice].target);
+}
+
+bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
+	if (evt.type != SDL_EVENT_KEY_DOWN) return false;
+
+	uint32_t shown = uint32_t(options.size());
+	if (shown == 0) return false;
+
+	if (evt.key.key == SDLK_RETURN || evt.key.key == SDLK_SPACE) {
+		choose(selected);
+		return true;
+	}
+	if (evt.key.key == SDLK_UP || evt.key.key == SDLK_W) {
+		selected = (selected + shown - 1) % shown;
+		return true;
+	}
+	if (evt.key.key == SDLK_DOWN || evt.key.key == SDLK_S) {
+		selected = (selected + 1) % shown;
+		return true;
+	}
+	if (evt.key.key >= SDLK_1 && evt.key.key <= SDLK_9) {
+		uint32_t index = uint32_t(evt.key.key - SDLK_1);
+		if (index < shown) choose(index);
+		return true;
 	}
 
 	return false;
 }
 
-void PlayMode::update(float elapsed) {
+std::string PlayMode::option_label(Story::Node const &story_node, uint32_t choice) const {
+	Story::Choice const &c = story->choices[choice];
+	return std::to_string(choice - story_node.choice_begin + 1) + ". " + story->span(c.text_begin, c.text_end);
+}
 
-	//slowly rotates through [0,1):
-	wobble += elapsed / 10.0f;
-	wobble -= std::floor(wobble);
+float PlayMode::block_height(Story::Node const &story_node, float column) {
+	float height = text_renderer->shape(story->span(story_node.text_begin, story_node.text_end), column).size.y;
+	height += text_renderer->line_height() * 0.5f;
+	if (story_node.choice_begin == story_node.choice_end) {
+		height += text_renderer->shape(RestartLabel, column).size.y;
+	}
+	for (uint32_t i = story_node.choice_begin; i < story_node.choice_end; ++i) {
+		height += text_renderer->shape(option_label(story_node, i), column).size.y;
+	}
+	return height;
+}
 
-	hip->rotation = hip_base_rotation * glm::angleAxis(
-		glm::radians(5.0f * std::sin(wobble * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 1.0f, 0.0f)
-	);
-	upper_leg->rotation = upper_leg_base_rotation * glm::angleAxis(
-		glm::radians(7.0f * std::sin(wobble * 2.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
-	);
-	lower_leg->rotation = lower_leg_base_rotation * glm::angleAxis(
-		glm::radians(10.0f * std::sin(wobble * 3.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
-	);
+void PlayMode::fit_pixel_size(glm::uvec2 const &drawable_size) {
+	float room = float(drawable_size.y) * (1.0f - TopFraction - BottomFraction);
+	uint32_t pixel_size = pixel_size_for(drawable_size);
 
-	//move sound to follow leg tip position:
-	leg_tip_loop->set_position(get_leg_tip_position(), 1.0f / 60.0f);
+	//the whole story is measured so the text keeps one size from the first node to the last
+	while (true) {
+		set_pixel_size(pixel_size);
+		float column = column_for(drawable_size);
+		float tallest = 0.0f;
+		for (auto const &story_node : story->nodes) {
+			tallest = std::max(tallest, block_height(story_node, column));
+		}
+		if (tallest <= room || pixel_size <= MinPixelSize) break;
+		pixel_size = std::max(MinPixelSize, uint32_t(float(pixel_size) * 0.85f));
+	}
+}
 
-	//move camera:
-	{
-
-		//combine inputs into a move:
-		constexpr float PlayerSpeed = 30.0f;
-		glm::vec2 move = glm::vec2(0.0f);
-		if (left.pressed && !right.pressed) move.x =-1.0f;
-		if (!left.pressed && right.pressed) move.x = 1.0f;
-		if (down.pressed && !up.pressed) move.y =-1.0f;
-		if (!down.pressed && up.pressed) move.y = 1.0f;
-
-		//make it so that moving diagonally doesn't go faster:
-		if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
-
-		glm::mat4x3 frame = camera->transform->make_parent_from_local();
-		glm::vec3 frame_right = frame[0];
-		//glm::vec3 up = frame[1];
-		glm::vec3 frame_forward = -frame[2];
-
-		camera->transform->position += move.x * frame_right + move.y * frame_forward;
+void PlayMode::reshape(glm::uvec2 const &drawable_size) {
+	if (shaped_for != drawable_size) {
+		fit_pixel_size(drawable_size);
+		shaped_for = drawable_size;
 	}
 
-	{ //update listener to camera position:
-		glm::mat4x3 frame = camera->transform->make_parent_from_local();
-		glm::vec3 frame_right = frame[0];
-		glm::vec3 frame_at = frame[3];
-		Sound::listener.set_position_right(frame_at, frame_right, 1.0f / 60.0f);
+	float column = column_for(drawable_size);
+	Story::Node const &current_node = story->nodes[node];
+	prose = text_renderer->shape(story->span(current_node.text_begin, current_node.text_end), column);
+
+	options.clear();
+	for (uint32_t i = current_node.choice_begin; i < current_node.choice_end; ++i) {
+		options.emplace_back(text_renderer->shape(option_label(current_node, i), column));
+	}
+	//an ending has nowhere to go, so it offers the one line that starts the story over
+	if (options.empty()) {
+		options.emplace_back(text_renderer->shape(RestartLabel, column));
 	}
 
-	//reset button press counters:
-	left.downs = 0;
-	right.downs = 0;
-	up.downs = 0;
-	down.downs = 0;
+	needs_shape = false;
 }
 
 void PlayMode::draw(glm::uvec2 const &drawable_size) {
-	//update camera aspect ratio for drawable:
-	camera->aspect = float(drawable_size.x) / float(drawable_size.y);
+	if (needs_shape || shaped_for != drawable_size) reshape(drawable_size);
 
-	//set up light type and position for lit_color_texture_program:
-	// TODO: consider using the Light(s) in the scene to do this
-	glUseProgram(lit_color_texture_program->program);
-	glUniform1i(lit_color_texture_program->LIGHT_TYPE_int, 1);
-	glUniform3fv(lit_color_texture_program->LIGHT_DIRECTION_vec3, 1, glm::value_ptr(glm::vec3(0.0f, 0.0f,-1.0f)));
-	glUniform3fv(lit_color_texture_program->LIGHT_ENERGY_vec3, 1, glm::value_ptr(glm::vec3(1.0f, 1.0f, 0.95f)));
-	glUseProgram(0);
-
-	glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
-	glClearDepth(1.0f); //1.0 is actually the default value to clear the depth buffer to, but FYI you can change it.
+	glm::vec4 clear = srgb_to_linear(Background);
+	glClearColor(clear.r, clear.g, clear.b, clear.a);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glDisable(GL_DEPTH_TEST);
 
-	glEnable(GL_DEPTH_TEST);
-	glDepthFunc(GL_LESS); //this is the default depth comparison function, but FYI you can change it.
+	float column = column_for(drawable_size);
+	float left = std::round((float(drawable_size.x) - column) * 0.5f);
+	float line = text_renderer->line_height();
 
-	scene.draw(*camera);
+	//the first baseline sits one ascender below the top margin
+	float y = std::round(float(drawable_size.y) * TopFraction) + text_renderer->ascender();
+	text_renderer->draw(prose, glm::vec2(left, y), TextColor);
 
-	{ //use DrawLines to overlay some text:
-		glDisable(GL_DEPTH_TEST);
-		float aspect = float(drawable_size.x) / float(drawable_size.y);
-		DrawLines lines(glm::mat4(
-			1.0f / aspect, 0.0f, 0.0f, 0.0f,
-			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, 0.0f,
-			0.0f, 0.0f, 0.0f, 1.0f
-		));
-
-		constexpr float H = 0.09f;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
-		float ofs = 2.0f / drawable_size.y;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + + 0.1f * H + ofs, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+	y += prose.size.y + line * 0.5f;
+	for (uint32_t i = 0; i < options.size(); ++i) {
+		text_renderer->draw(options[i], glm::vec2(left, y), i == selected ? TextColor : DimColor);
+		y += options[i].size.y;
 	}
-	GL_ERRORS();
-}
 
-glm::vec3 PlayMode::get_leg_tip_position() {
-	//the vertex position here was read from the model in blender:
-	return lower_leg->make_world_from_local() * glm::vec4(-1.26137f, -11.861f, 0.0f, 1.0f);
+	//every glyph on screen goes out in one draw call
+	text_renderer->flush(drawable_size);
+
+	GL_ERRORS();
 }

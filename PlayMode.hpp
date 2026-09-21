@@ -1,51 +1,43 @@
+#pragma once
+
 #include "Mode.hpp"
 
-#include "Scene.hpp"
-#include "Sound.hpp"
+#include "Story.hpp"
+#include "TextRenderer.hpp"
 
 #include <glm/glm.hpp>
 
+#include <cstdint>
+#include <string>
 #include <vector>
-#include <deque>
 
 struct PlayMode : Mode {
 	PlayMode();
 	virtual ~PlayMode();
 
-	//functions called by main loop:
+	//functions called by main loop
 	virtual bool handle_event(SDL_Event const &, glm::uvec2 const &window_size) override;
-	virtual void update(float elapsed) override;
 	virtual void draw(glm::uvec2 const &drawable_size) override;
 
 	//----- game state -----
 
-	//input tracking:
-	struct Button {
-		uint8_t downs = 0;
-		uint8_t pressed = 0;
-	} left, right, down, up;
+	uint32_t node = 0;
+	uint32_t selected = 0;
 
-	//local copy of the game scene (so code can change it during gameplay):
-	Scene scene;
+	void go_to(uint32_t next_node);
+	void choose(uint32_t choice);
 
-	//hexapod leg to wobble:
-	Scene::Transform *hip = nullptr;
-	Scene::Transform *upper_leg = nullptr;
-	Scene::Transform *lower_leg = nullptr;
-	glm::quat hip_base_rotation;
-	glm::quat upper_leg_base_rotation;
-	glm::quat lower_leg_base_rotation;
-	float wobble = 0.0f;
+	//----- shaped text -----
 
-	glm::vec3 get_leg_tip_position();
+	//shaping happens on a node change or a resize, never per frame
+	TextRenderer::ShapedText prose;
+	std::vector< TextRenderer::ShapedText > options;
+	glm::uvec2 shaped_for = glm::uvec2(0);
+	bool needs_shape = true;
 
-	//music coming from the tip of the leg (as a demonstration):
-	std::shared_ptr< Sound::PlayingSample > leg_tip_loop;
-
-	//car honk sound:
-	std::shared_ptr< Sound::PlayingSample > honk_oneshot;
-	
-	//camera:
-	Scene::Camera *camera = nullptr;
-
+	void reshape(glm::uvec2 const &drawable_size);
+	//picks the one glyph size that lets every node in the story fit this window
+	void fit_pixel_size(glm::uvec2 const &drawable_size);
+	float block_height(Story::Node const &story_node, float column);
+	std::string option_label(Story::Node const &story_node, uint32_t choice) const;
 };

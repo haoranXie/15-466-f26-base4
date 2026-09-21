@@ -13,6 +13,10 @@ dist/SDL3.dll
 dist/game
 dist/game.exe
 freetype-test*
+pack-story
+pack-story.exe
+pack-story.ilk
+pack-story.pdb
 scenes/SDL3.dll
 scenes/show-meshes*
 scenes/show-scene*

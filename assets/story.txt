@@ -1,0 +1,100 @@
+# run pack-story on this to make dist/story.chunk
+#
+#   :: name            starts a node, and the game begins at the first one
+#   > label -> name    adds a choice
+#   anything else      is prose, and a blank line is a paragraph break
+#   a node with no choices is an ending
+
+:: start
+You are the captain of a submarine. You are eleven hundred feet down in the
+Pacific, the engines are dead, and nobody knows where you are. Six hours ago
+the machine that cleans the air stopped working.
+
+The gauge is in the control room. You are the only one who has looked at it.
+It says eleven hours.
+
+You climb down the ladder. Eleven people stop what they are doing.
+
+"How long?" the engineer says.
+
+> Say eleven hours. -> said_truth
+> Say sixteen hours. -> said_lie
+
+:: said_truth
+"Eleven hours."
+
+Nobody argues with the number.
+
+The engineer sits down against the wall and does not pick her tools back up.
+You tell her to get up. She does not move. By the fourth hour you have stopped
+asking.
+
+> Continue -> hatch
+
+:: said_lie
+"Sixteen hours."
+
+She nods and goes back to the air machine. By the third hour she has it in
+pieces on the floor.
+
+At the fourth hour she sits back and tells you it will not run again. You have
+her keep working anyway, and she is still at it when the air goes bad.
+
+> Continue -> hatch
+
+:: hatch
+Ten hours later. The air is down to about an hour and it is thick enough to
+taste. You call everyone to the ladder.
+
+There is one thing left to do and it is the hatch. At a hundred and fifty feet
+a crew can go out through it and swim up. At eleven hundred feet the water
+comes in like a wall and it is over in under a minute. Eleven people line up
+and look at you.
+
+> Say you would rather end it quickly. -> said_end
+> Say we are swimming out. -> said_way_out
+
+:: said_end
+"Nobody is coming," you say. "There is an hour left and I am not going to make
+you sit through it. I am opening the hatch. It will be quick."
+
+Nobody says anything. The oldest of them shakes your hand on the way past.
+
+> Turn the wheel -> ending_truth
+
+:: said_way_out
+"We are going out through the hatch and swimming up," you say. "Hold your
+breath and do not stop on the way."
+
+They have all trained for it. Not one of them says anything about the depth,
+and you do not bring it up either.
+
+Two of them push to the front of the line.
+
+> Turn the wheel -> ending_lie
+
+:: ending_truth
+You turn the wheel. The hatch opens.
+
+No water comes in.
+
+You climb out onto the hull. There is a roof over you, a long way up, holding
+the ocean off. Below the submarine there is a city, going down farther than
+you can see. The others come up behind you. Somebody starts laughing and
+cannot stop.
+
+To be continued.
+
+:: ending_lie
+You turn the wheel. The hatch opens.
+
+No water comes in.
+
+You climb out onto the hull. There is a roof over you, a long way up, holding
+the ocean off. Below the submarine there is a city, going down farther than
+you can see.
+
+Before you can get a closer look, someone puts their hands on your back and
+shoves. You tumble down a cliff and die.
+
+The end.
