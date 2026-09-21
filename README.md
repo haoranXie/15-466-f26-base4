@@ -3,8 +3,8 @@
 Author: Haoran Xie
 
 Design: You are the captain of a submarine stuck on the sea floor with dead
-engines and eleven hours of air. You never choose what to do, only what your
-crew members are told, and they act on whatever you tell them.
+engines and eleven hours of air. Your choices will influence how your crew
+treats you and whether you get out of this situation alive.
 
 Text Drawing: All text is shaped and rasterized at runtime. At startup
 `TextRenderer` opens the font with freetype and wraps that same `FT_Face` in a
