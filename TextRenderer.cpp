@@ -92,6 +92,8 @@ TextRenderer::TextRenderer(std::string const &font_filename, uint32_t pixel_size
 	GL_ERRORS();
 }
 
+//teardown of the face and the library is based on https://www.freetype.org/freetype2/docs/tutorial/step1.html
+//and of the harfbuzz font on https://github.com/harfbuzz/harfbuzz-tutorial/blob/master/hello-harfbuzz-freetype.c
 TextRenderer::~TextRenderer() {
 	if (font) hb_font_destroy(font);
 	if (face) FT_Done_Face(face);
